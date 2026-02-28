@@ -14,7 +14,11 @@ L.Icon.Default.mergeOptions({
 function MapPanner({ position }) {
     const map = useMap();
     useEffect(() => {
-        map.panTo(position);
+        const current = map.getCenter();
+        const dist = map.distance(current, position);
+        if (dist > 5) {
+            map.panTo(position);
+        }
     }, [position]);
     return null;
 }
@@ -27,41 +31,35 @@ function MapResizer() {
     return null;
 }
 
-const LiveMap = () => {
-    const [cars, setCars] = useState({
-        car1: { lat: 51.505, lon: -0.09 },
-        car2: { lat: 51.506, lon: -0.092 },
+const LiveMap = ({ x, y }) => {
+
+    const [car, setCar] = useState({
+        car1: { lat: y, lon: x }, // assuming x = longitude, y = latitude
     });
 
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setCars(prev => ({
-                car1: {
-                    lat: prev.car1.lat + (Math.random() - 0.5) * 0.001,
-                    lon: prev.car1.lon + (Math.random() - 0.5) * 0.001
-                },
-                car2: {
-                    lat: prev.car2.lat + (Math.random() - 0.5) * 0.001,
-                    lon: prev.car2.lon + (Math.random() - 0.5) * 0.001
-                }
-            }));
-        }, 1000);
-        return () => clearInterval(interval);
-    }, []);
+    const followCar = car.car1;
 
-    const followCar = cars.car1;
+    useEffect(() => {
+        setCar({
+            car1: { lat: y, lon: x }
+        });
+    }, [x, y]);
 
     return (
-        <MapContainer center={[51.505, -0.09]} zoom={15} style={{ height: '100%', width: '100%' }}>
+        <MapContainer
+            center={[y, x]}
+            zoom={15}
+            style={{ height: '100%', width: '100%' }}
+        >
             <TileLayer
                 url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                attribution='&copy; OpenStreetMap contributors'
+                attribution="&copy; OpenStreetMap contributors"
             />
-            {Object.entries(cars).map(([id, car]) => (
-                <Marker key={id} position={[car.lat, car.lon]}>
-                    <Popup>{id}</Popup>
-                </Marker>
-            ))}
+
+            <Marker position={[followCar.lat, followCar.lon]}>
+                <Popup>car1</Popup>
+            </Marker>
+
             <MapPanner position={[followCar.lat, followCar.lon]} />
             <MapResizer />
         </MapContainer>
