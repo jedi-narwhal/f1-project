@@ -1,15 +1,30 @@
 import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { MaptilerLayer } from "@maptiler/leaflet-maptilersdk";
 
-// Fix default marker icon issue in React
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
     iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
     iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
     shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
+
+function MaptilerTileLayer() {
+    const map = useMap();
+    useEffect(() => {
+        const layer = new MaptilerLayer({
+            apiKey: "ZrrGjvF4usKVx7RtCKh6",
+            style: "streets-v4-dark",
+        }).addTo(map);
+
+        return () => {
+            map.removeLayer(layer);
+        };
+    }, [map]);
+    return null;
+}
 
 function MapPanner({ position }) {
     const map = useMap();
@@ -32,9 +47,8 @@ function MapResizer() {
 }
 
 const LiveMap = ({ x, y }) => {
-
     const [car, setCar] = useState({
-        car1: { lat: y, lon: x }, // assuming x = longitude, y = latitude
+        car1: { lat: y, lon: x },
     });
 
     const followCar = car.car1;
@@ -51,10 +65,7 @@ const LiveMap = ({ x, y }) => {
             zoom={15}
             style={{ height: '100%', width: '100%' }}
         >
-            <TileLayer
-                url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                attribution="&copy; OpenStreetMap contributors"
-            />
+            <MaptilerTileLayer />
 
             <Marker position={[followCar.lat, followCar.lon]}>
                 <Popup>car1</Popup>
