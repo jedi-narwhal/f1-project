@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "lsof -ti :8081 | xargs kill -9 2>/dev/null; true",
+    "setup:py": "pip3 install -r scripts/requirements.txt",
     "dev": "concurrently --kill-others=false -n vite,telemetry,arduino,camera \"vite\" \"node server/telemetry-server.js\" \"python3 scripts/arduino_to_server.py\" \"python3 scripts/camera_worker.py\"",
     "build": "vite build",
     "lint": "eslint .",

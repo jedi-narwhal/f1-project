@@ -45,13 +45,17 @@ export default function App() {
   const [rawInput,        setRawInput]        = useState(DEFAULT_SAMPLE);
   const [injectFeedback,  setInjectFeedback]  = useState({ text: '', cls: 'fb' });
   const [pathDistanceMeters, setPathDistanceMeters] = useState(0);
+  const [pathPoints, setPathPoints] = useState([]);
   const [cameraObjects, setCameraObjects] = useState([]);
+  const [lastApiReceived, setLastApiReceived] = useState(null);
 
   // Refs used by canvas animation loops (avoid stale closures & excessive re-renders)
   const telemetryRef = useRef(INITIAL_TELEMETRY);
   const ecgRef       = useRef({ hrBpm: 0, phase: 0, buf: new Array(120).fill(0) });
   const lastApiTMs   = useRef(null);
   const lastLatLon   = useRef(null);
+  const velocityMs   = useRef(0);
+  const lastAccelTMs = useRef(null);
 
   // Keep telemetryRef in sync with state
   useEffect(() => {
@@ -90,6 +94,22 @@ export default function App() {
     const now = new Date();
     const mag = d.ax !== undefined ? Math.sqrt(d.ax ** 2 + d.ay ** 2 + d.az ** 2) : 0;
 
+    // Speed from integrating acceleration (g's) over time
+    const G_TO_MS2 = 9.81;
+    const MS_TO_MPH = 2.237;
+    if (d.ax != null && d.ay != null && d.az != null && d.t_ms != null) {
+      const ax = d.ax, ay = d.ay;
+      const horiz = Math.sqrt(ax * ax + ay * ay);
+      const prevT = lastAccelTMs.current;
+      lastAccelTMs.current = d.t_ms;
+      if (prevT != null && prevT > 0 && d.t_ms > prevT) {
+        const dt = (d.t_ms - prevT) / 1000;
+        const axMs2 = -ax * G_TO_MS2;  // negate: sensor reports opposite sign for forward accel
+        velocityMs.current = Math.max(0, velocityMs.current + axMs2 * dt);
+      }
+      if (horiz < 0.02 && velocityMs.current < 0.5) velocityMs.current = 0;
+    }
+
     // Update canvas refs immediately (no re-render needed)
     if (d.bpm !== undefined) ecgRef.current.hrBpm = d.bpm;
 
@@ -121,14 +141,28 @@ export default function App() {
     });
   }, []);
 
-  // Poll telemetry server; also receive camera objects (updated every 10s by camera worker)
+  // Poll telemetry server; update dashboard when we get new Arduino data
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
         const data = await getArduinoData();
+        if (data?.t_ms !== lastApiTMs.current) {
+          console.log('[Telemetry]', data);
+        }
+        setLastApiReceived(Date.now());
         if (Array.isArray(data?.cameraObjects)) setCameraObjects(data.cameraObjects);
-        if (data?.t_ms != null && data.t_ms > 0 && data.t_ms !== lastApiTMs.current) {
-          lastApiTMs.current = data.t_ms;
+
+        const hasTelemetry = data && (
+          (data.t_ms != null && data.t_ms > 0) ||
+          (data.ax != null || data.ay != null || data.az != null) ||
+          (data.temp != null || data.bpm != null || data.gas != null)
+        );
+        if (!hasTelemetry) return;
+
+        const tMsNew = data.t_ms != null && data.t_ms > 0 && data.t_ms !== lastApiTMs.current;
+        const firstTelemetry = lastApiTMs.current === null && (data.ax != null || data.temp != null || data.bpm != null);
+        if (tMsNew || firstTelemetry) {
+          if (data.t_ms != null) lastApiTMs.current = data.t_ms;
           handleUpdate({
             ax: data.ax,
             ay: data.ay,
@@ -138,10 +172,11 @@ export default function App() {
             bpm: data.bpm,
             gas: data.gas,
             ir: data.ir,
+            t_ms: data.t_ms,
           });
         }
-      } catch {
-        // Server down or CORS; ignore
+      } catch (_e) {
+        setLastApiReceived(null);
       }
     }, 500);
     return () => clearInterval(interval);
@@ -165,7 +200,7 @@ export default function App() {
     setActivePanel(prev => prev === which ? null : which);
   }, []);
 
-  // Path distance from GPS (lat/lon changes)
+  // Path distance and path points from GPS (lat/lon changes)
   const onPositionChange = useCallback((lat, lon) => {
     const prev = lastLatLon.current;
     if (prev != null) {
@@ -173,23 +208,26 @@ export default function App() {
       if (meters > 0) setPathDistanceMeters(m => m + meters);
     }
     lastLatLon.current = { lat, lon };
+    setPathPoints(pts => [...pts, [lat, lon]]);
   }, []);
 
-  // Quick Start: reset session and start fresh data collection + distance counting
+  // Quick Start: reset session, path, speed, and start fresh
   const handleQuickStart = useCallback(() => {
     lastLatLon.current = null;
+    velocityMs.current = 0;
+    lastAccelTMs.current = null;
     setPathDistanceMeters(0);
+    setPathPoints([]);
     setTelemetry({
       ...INITIAL_TELEMETRY,
       t0: Date.now(),
     });
   }, []);
 
-  // Derived display values (accel assumed in g's: at rest mag ≈ 1, so speed = 0, g = 1.0)
+  // Derived display values (speed from integrated accel; g-force = mag in g's)
   const d       = telemetry.lastData;
   const mag     = d?.ax !== undefined ? Math.sqrt(d.ax ** 2 + d.ay ** 2 + d.az ** 2) : 0;
-  const speedG  = Math.max(0, mag - 1);
-  const mph     = (speedG * 25).toFixed(1);
+  const mph     = (velocityMs.current * 2.237).toFixed(1);
   const gForce  = mag > 0 ? mag.toFixed(2) : '0.00';
   const speedAlert = mag > 10;
   const pathDistanceMiles = pathDistanceMeters / 1609.34;
@@ -211,7 +249,7 @@ export default function App() {
   return (
     <>
       {/* Full-screen map background */}
-      <LiveMap panelOpen={activePanel !== null} irAlert={irDet} onPositionChange={onPositionChange} />
+      <LiveMap panelOpen={activePanel !== null} irAlert={irDet} onPositionChange={onPositionChange} pathPoints={pathPoints} />
 
       {/* Bottom gradient fade */}
       <div className="bottom-fade" />
@@ -222,6 +260,7 @@ export default function App() {
         irPillClass={irPillClass}
         irPillContent={irPillContent}
         t0={telemetry.t0}
+        feedLive={lastApiReceived != null && Date.now() - lastApiReceived < 4000}
       />
 
       {/* Quick Start — positioned below top bar */}

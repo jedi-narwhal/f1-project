@@ -37,10 +37,11 @@ function makePulseIcon(color) {
  *   panelOpen  – boolean, triggers invalidateSize after CSS transition
  *   irAlert    – boolean, colours the marker red when obstacle detected
  */
-export default function LiveMap({ panelOpen = false, irAlert = false, onPositionChange }) {
+export default function LiveMap({ panelOpen = false, irAlert = false, onPositionChange, pathPoints = [] }) {
   const containerRef = useRef(null);
   const mapRef       = useRef(null);
   const markerRef    = useRef(null);
+  const polylineRef  = useRef(null);
   const watchIdRef   = useRef(null);
 
   // Initialise map and start geolocation once on mount
@@ -68,6 +69,13 @@ export default function LiveMap({ panelOpen = false, irAlert = false, onPosition
     mapRef.current = map;
     markerRef.current = marker;
     window._leafletMap = map;
+
+    const polyline = L.polyline([], {
+      color: '#e8002d',
+      weight: 4,
+      opacity: 0.9,
+    }).addTo(map);
+    polylineRef.current = polyline;
 
     let userLocated = false;
     function updatePosition(pos) {
@@ -100,6 +108,7 @@ export default function LiveMap({ panelOpen = false, irAlert = false, onPosition
       map.remove();
       mapRef.current = null;
       markerRef.current = null;
+      polylineRef.current = null;
       window._leafletMap = null;
     };
   }, []);
@@ -110,7 +119,11 @@ export default function LiveMap({ panelOpen = false, irAlert = false, onPosition
     markerRef.current.setIcon(makePulseIcon(irAlert ? '#e8002d' : '#4facfe'));
   }, [irAlert]);
 
-  // Map stays full width (sidebar overlays), so no invalidateSize needed on panel toggle
+  // Update red path polyline when pathPoints changes (from Quick Start + GPS)
+  useEffect(() => {
+    if (!polylineRef.current || !Array.isArray(pathPoints)) return;
+    polylineRef.current.setLatLngs(pathPoints);
+  }, [pathPoints]);
 
   return <div ref={containerRef} id="mapCanvas" />;
 }
