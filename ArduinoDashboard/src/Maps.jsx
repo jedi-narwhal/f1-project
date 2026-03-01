@@ -41,8 +41,14 @@ function MapPanner({ position }) {
 function MapResizer() {
     const map = useMap();
     useEffect(() => {
+        // Invalidate on mount
         setTimeout(() => map.invalidateSize(), 100);
-    }, []);
+
+        // Invalidate whenever the sidebar toggle dispatches a resize event
+        const handleResize = () => map.invalidateSize();
+        window.addEventListener("resize", handleResize);
+        return () => window.removeEventListener("resize", handleResize);
+    }, [map]);
     return null;
 }
 
@@ -54,9 +60,7 @@ const LiveMap = ({ x, y }) => {
     const followCar = car.car1;
 
     useEffect(() => {
-        setCar({
-            car1: { lat: y, lon: x }
-        });
+        setCar({ car1: { lat: y, lon: x } });
     }, [x, y]);
 
     return (

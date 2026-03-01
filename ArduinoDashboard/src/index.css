@@ -1,1 +1,9 @@
 @import "tailwindcss";
+
+.leaflet-pane {
+    z-index: 1 !important;
+}
+.leaflet-top,
+.leaflet-bottom {
+    z-index: 2 !important;
+}

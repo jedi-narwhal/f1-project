@@ -39,12 +39,19 @@ func generateRandomData(base *TelemetryData) TelemetryData {
 	return *base
 }
 
-// HTTP handler
 func telemetryHandler(base *TelemetryData) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Content-Type", "application/json")
+
+		// Handle preflight
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 
 		data := generateRandomData(base)
 
@@ -58,7 +65,6 @@ func telemetryHandler(base *TelemetryData) http.HandlerFunc {
 		fmt.Println("Sent data:", data)
 	}
 }
-
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
