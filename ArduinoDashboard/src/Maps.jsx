@@ -15,7 +15,7 @@ function MaptilerTileLayer() {
     const map = useMap();
     useEffect(() => {
         const layer = new MaptilerLayer({
-            apiKey: "ZrrGjvF4usKVx7RtCKh6",
+            apiKey: import.meta.env.VITE_MAP_API_KEY,
             style: "streets-v4-dark",
         }).addTo(map);
 
