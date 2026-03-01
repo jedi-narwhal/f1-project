@@ -1,6 +1,6 @@
 export async function getArduinoData() {
   try {
-    const response = await fetch("http://localhost:8081/getTelemetry");
+    const response = await fetch("/getTelemetry");
     const data = await response.json();
     return data;
   } catch (error) {

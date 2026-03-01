@@ -4,85 +4,148 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand"
 	"net/http"
-	"time"
+	"sync"
 )
 
-// TelemetryData represents Arduino-like telemetry
-type TelemetryData struct {
-	DistanceTraveled   int     `json:"DistanceTraveled"`
-	DistanceFromSensor int     `json:"DistanceFromSensor"`
-	PosX               float64 `json:"PosX"` // longitude
-	PosY               float64 `json:"PosY"` // latitude
-	HeatTemp           int     `json:"HeatTemp"`
+const serverPort = 8081
+
+// ArduinoTelemetry is the JSON shape sent by the Arduino / Python bridge
+type ArduinoTelemetry struct {
+	TMs    int64   `json:"t_ms"`
+	IR     int     `json:"ir"`
+	Accel  Accel   `json:"accel"`
+	RPY    RPY     `json:"rpy"`
+	Thermo Thermo  `json:"thermo"`
+	Heart  Heart   `json:"heart"`
+	MQ2    MQ2     `json:"mq2"`
 }
 
-// generateRandomData updates telemetry state
-func generateRandomData(base *TelemetryData) TelemetryData {
-
-	// Move robot randomly by small real-world increments (~0-35 meters per step)
-	dx := (rand.Float64() - 0.5) * 0.0005 // longitude delta
-	dy := (rand.Float64() - 0.5) * 0.0005 // latitude delta
-
-	base.PosX += dx
-	base.PosY += dy
-
-	// Add movement distance in meters (approx: 1 degree lat/lon ~ 111,000m)
-	stepDist := int(math.Sqrt(dx*dx+dy*dy) * 111000)
-	base.DistanceTraveled += stepDist
-
-	// Simulate sensor + temperature
-	base.DistanceFromSensor = rand.Intn(100)
-	base.HeatTemp = rand.Intn(5) + 93
-
-	return *base
+type Accel struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
 }
 
-func telemetryHandler(base *TelemetryData) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+type RPY struct {
+	Roll  float64 `json:"roll"`
+	Pitch float64 `json:"pitch"`
+	Yaw   float64 `json:"yaw"`
+}
 
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Content-Type", "application/json")
+type Thermo struct {
+	C  float64 `json:"c"`
+	RH float64 `json:"rh"`
+}
 
-		// Handle preflight
-		if r.Method == "OPTIONS" {
+type Heart struct {
+	Raw   int     `json:"raw"`
+	Hp    float64 `json:"hp"`
+	BPM   float64 `json:"bpm"`
+	Armed int     `json:"armed"`
+}
+
+type MQ2 struct {
+	AO      int `json:"ao"`
+	DO      int `json:"do"`
+	Trigger int `json:"triggered"`
+	EstPPM  int `json:"est_ppm"`
+}
+
+// DashboardTelemetry is what the React dashboard expects (GET response)
+type DashboardTelemetry struct {
+	Ax   float64 `json:"ax"`
+	Ay   float64 `json:"ay"`
+	Az   float64 `json:"az"`
+	Temp float64 `json:"temp"`
+	Hum  float64 `json:"hum"`
+	BPM  float64 `json:"bpm"`
+	Gas  float64 `json:"gas"`
+	IR   string  `json:"ir"`
+	TMs  int64   `json:"t_ms"`
+}
+
+func arduinoToDashboard(a *ArduinoTelemetry) DashboardTelemetry {
+	irStr := "CLEAR"
+	if a.IR != 0 {
+		irStr = "OBSTACLE DETECTED"
+	}
+	bpm := a.Heart.BPM
+	// Arduino often sends low values (e.g. 1.8); treat as BPM as-is, round for display
+	if bpm < 0 {
+		bpm = 0
+	}
+	return DashboardTelemetry{
+		Ax:   a.Accel.X,
+		Ay:   a.Accel.Y,
+		Az:   a.Accel.Z,
+		Temp: a.Thermo.C,
+		Hum:  a.Thermo.RH,
+		BPM:  math.Round(bpm*10) / 10, // one decimal
+		Gas:  float64(a.MQ2.EstPPM),
+		IR:   irStr,
+		TMs:  a.TMs,
+	}
+}
+
+var (
+	latestMu     sync.RWMutex
+	latestArduino *ArduinoTelemetry
+	latestDashboard DashboardTelemetry
+	hasData      bool
+)
+
+func cors(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/json")
+}
+
+func telemetryHandler(w http.ResponseWriter, r *http.Request) {
+	cors(w)
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	switch r.Method {
+	case "POST":
+		var body ArduinoTelemetry
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+		latestMu.Lock()
+		latestArduino = &body
+		latestDashboard = arduinoToDashboard(&body)
+		hasData = true
+		latestMu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	case "GET":
+		latestMu.RLock()
+		defer latestMu.RUnlock()
+		if !hasData {
 			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(DashboardTelemetry{})
 			return
 		}
-
-		data := generateRandomData(base)
-
-		jsonData, err := json.MarshalIndent(data, "", "  ")
-		if err != nil {
-			http.Error(w, "Error generating JSON", http.StatusInternalServerError)
-			return
-		}
-
-		w.Write(jsonData)
-		fmt.Println("Sent data:", data)
+		json.NewEncoder(w).Encode(latestDashboard)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
 func main() {
-	rand.Seed(time.Now().UnixNano())
-
-	baseTelemetry := &TelemetryData{
-		DistanceTraveled:   0,
-		DistanceFromSensor: 0,
-		PosX:               -122.4194, // longitude (San Francisco)
-		PosY:               37.7749,   // latitude  (San Francisco)
-		HeatTemp:           rand.Intn(5) + 93,
-	}
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("/getTelemetry", telemetryHandler(baseTelemetry))
+	mux.HandleFunc("/getTelemetry", telemetryHandler)
 
-	serverPort := 8081
-	fmt.Printf("Telemetry server running at http://localhost:%d/getTelemetry\n", serverPort)
-
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", serverPort), mux); err != nil {
+	addr := fmt.Sprintf(":%d", serverPort)
+	fmt.Printf("Telemetry server at http://localhost:%d/getTelemetry (GET = dashboard format, POST = Arduino JSON)\n", serverPort)
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		panic(err)
 	}
 }
+
