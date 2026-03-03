@@ -94,20 +94,24 @@ export default function App() {
     const now = new Date();
     const mag = d.ax !== undefined ? Math.sqrt(d.ax ** 2 + d.ay ** 2 + d.az ** 2) : 0;
 
-    // Speed from integrating acceleration (g's) over time
+    // Speed from integrating acceleration (g's) — subtract gravity so at-rest reading is 0
     const G_TO_MS2 = 9.81;
-    const MS_TO_MPH = 2.237;
     if (d.ax != null && d.ay != null && d.az != null && d.t_ms != null) {
-      const ax = d.ax, ay = d.ay;
-      const horiz = Math.sqrt(ax * ax + ay * ay);
+      const ax = d.ax, ay = d.ay, az = d.az;
       const prevT = lastAccelTMs.current;
       lastAccelTMs.current = d.t_ms;
-      if (prevT != null && prevT > 0 && d.t_ms > prevT) {
-        const dt = (d.t_ms - prevT) / 1000;
-        const axMs2 = -ax * G_TO_MS2;  // negate: sensor reports opposite sign for forward accel
-        velocityMs.current = Math.max(0, velocityMs.current + axMs2 * dt);
+      if (mag > 0.2) {
+        // Dynamic accel = measured - gravity; gravity = a/|a| in g's
+        const scale = 1 - 1 / mag;
+        const axDyn = ax * scale;
+        if (prevT != null && prevT > 0 && d.t_ms > prevT) {
+          const dt = (d.t_ms - prevT) / 1000;
+          const axMs2 = axDyn * G_TO_MS2;
+          velocityMs.current = Math.max(0, velocityMs.current + axMs2 * dt);
+        }
+        // At rest: mag ≈ 1 → scale ≈ 0 → axDyn ≈ 0, velocity stable; zero when nearly still
+        if (mag >= 0.98 && mag <= 1.02 && velocityMs.current < 0.5) velocityMs.current = 0;
       }
-      if (horiz < 0.02 && velocityMs.current < 0.5) velocityMs.current = 0;
     }
 
     // Update canvas refs immediately (no re-render needed)
